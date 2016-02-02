@@ -31,9 +31,9 @@ LOCAL_SHARED_LIBRARIES := \
 	libstagefright libmedia libutils libbinder libstagefright_foundation \
 	libgui libcutils liblog libEGL libGLESv2
 #libjpeg
-ifeq ($(PLATFORM_SDK_VERSION), 19)
+#ifeq ($(PLATFORM_SDK_VERSION), 19)
 LOCAL_SHARED_LIBRARIES += libui #libui for Fence
-end
+#endif
 LOCAL_C_INCLUDES := \
 	frameworks/av/media/libstagefright \
 	frameworks/av/media/libstagefright/include \
