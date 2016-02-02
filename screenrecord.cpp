@@ -23,7 +23,10 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
+#include <sys/types.h>
 #include <sys/wait.h>
+
 #include <termios.h>
 #include <unistd.h>
 
@@ -53,6 +56,10 @@
 #include "Overlay.h"
 #include "FrameOutput.h"
 
+#ifndef PRId64
+#define PRId64 "lld"
+#endif
+
 using namespace android;
 
 static const uint32_t kMinBitRate = 100000;         // 0.1Mbps
@@ -65,9 +72,10 @@ static const char* kMimeTypeAvc = "video/avc";
 // Command-line parameters.
 static bool gVerbose = false;           // chatty on stdout
 static bool gRotate = false;            // rotate 90 degrees
-static enum {
-    FORMAT_MP4, FORMAT_H264, FORMAT_FRAMES, FORMAT_RAW_FRAMES
-} gOutputFormat = FORMAT_MP4;           // data format for output
+//static enum {
+//    FORMAT_MP4, FORMAT_H264, FORMAT_FRAMES, FORMAT_RAW_FRAMES, FORMAT_JPG
+//} gOutputFormat = FORMAT_MP4;           // data format for output
+OUT_OUT_FORMAT gOutputFormat = FORMAT_MP4;           // data format for output
 static bool gSizeSpecified = false;     // was size explicitly requested?
 static bool gWantInfoScreen = false;    // do we want initial info screen?
 static bool gWantFrameTime = false;     // do we want times on each frame?
@@ -117,13 +125,13 @@ static status_t configureSignals() {
     act.sa_handler = signalCatcher;
     if (sigaction(SIGINT, &act, &gOrigSigactionINT) != 0) {
         status_t err = -errno;
-        fprintf(stderr, "Unable to configure SIGINT handler: %s\n",
+        ALOGE("Unable to configure SIGINT handler: %s\n",
                 strerror(errno));
         return err;
     }
     if (sigaction(SIGHUP, &act, &gOrigSigactionHUP) != 0) {
         status_t err = -errno;
-        fprintf(stderr, "Unable to configure SIGHUP handler: %s\n",
+        ALOGE("Unable to configure SIGHUP handler: %s\n",
                 strerror(errno));
         return err;
     }
@@ -166,7 +174,7 @@ static status_t prepareEncoder(float displayFps, sp<MediaCodec>* pCodec,
     ALOGV("Creating codec");
     sp<MediaCodec> codec = MediaCodec::CreateByType(looper, kMimeTypeAvc, true);
     if (codec == NULL) {
-        fprintf(stderr, "ERROR: unable to create %s codec instance\n",
+        ALOGE("ERROR: unable to create %s codec instance\n",
                 kMimeTypeAvc);
         return UNKNOWN_ERROR;
     }
@@ -174,7 +182,7 @@ static status_t prepareEncoder(float displayFps, sp<MediaCodec>* pCodec,
     err = codec->configure(format, NULL, NULL,
             MediaCodec::CONFIGURE_FLAG_ENCODE);
     if (err != NO_ERROR) {
-        fprintf(stderr, "ERROR: unable to configure %s codec at %dx%d (err=%d)\n",
+        ALOGE("ERROR: unable to configure %s codec at %dx%d (err=%d)\n",
                 kMimeTypeAvc, gVideoWidth, gVideoHeight, err);
         codec->release();
         return err;
@@ -184,7 +192,7 @@ static status_t prepareEncoder(float displayFps, sp<MediaCodec>* pCodec,
     sp<IGraphicBufferProducer> bufferProducer;
     err = codec->createInputSurface(&bufferProducer);
     if (err != NO_ERROR) {
-        fprintf(stderr,
+        ALOGE(
             "ERROR: unable to create encoder input surface (err=%d)\n", err);
         codec->release();
         return err;
@@ -193,7 +201,7 @@ static status_t prepareEncoder(float displayFps, sp<MediaCodec>* pCodec,
     ALOGV("Starting codec");
     err = codec->start();
     if (err != NO_ERROR) {
-        fprintf(stderr, "ERROR: unable to start codec (err=%d)\n", err);
+        ALOGE("ERROR: unable to start codec (err=%d)\n", err);
         codec->release();
         return err;
     }
@@ -229,6 +237,7 @@ static status_t setDisplayProjection(const sp<IBinder>& dpy,
 
     // We need to preserve the aspect ratio of the display.
     float displayAspect = (float) sourceHeight / (float) sourceWidth;
+    ALOGV("displayAspect : %f \n", displayAspect);
 
 
     // Set the way we map the output onto the display surface (which will
@@ -327,7 +336,7 @@ static status_t runEncoder(const sp<MediaCodec>& encoder,
     Vector<sp<ABuffer> > buffers;
     err = encoder->getOutputBuffers(&buffers);
     if (err != NO_ERROR) {
-        fprintf(stderr, "Unable to get output buffers (err=%d)\n", err);
+        ALOGE("Unable to get output buffers (err=%d)\n", err);
         return err;
     }
 
@@ -342,7 +351,7 @@ static status_t runEncoder(const sp<MediaCodec>& encoder,
 
         if (systemTime(CLOCK_MONOTONIC) > endWhenNsec) {
             if (gVerbose) {
-                printf("Time limit reached\n");
+                ALOGD("Time limit reached\n");
             }
             break;
         }
@@ -413,7 +422,7 @@ static status_t runEncoder(const sp<MediaCodec>& encoder,
                     err = muxer->writeSampleData(buffers[bufIndex], trackIdx,
                             ptsUsec, flags);
                     if (err != NO_ERROR) {
-                        fprintf(stderr,
+                        ALOGE(
                             "Failed writing data to muxer (err=%d)\n", err);
                         return err;
                     }
@@ -422,7 +431,7 @@ static status_t runEncoder(const sp<MediaCodec>& encoder,
             }
             err = encoder->releaseOutputBuffer(bufIndex);
             if (err != NO_ERROR) {
-                fprintf(stderr, "Unable to release output buffer (err=%d)\n",
+                ALOGE("Unable to release output buffer (err=%d)\n",
                         err);
                 return err;
             }
@@ -446,7 +455,7 @@ static status_t runEncoder(const sp<MediaCodec>& encoder,
                     ALOGV("Starting muxer");
                     err = muxer->start();
                     if (err != NO_ERROR) {
-                        fprintf(stderr, "Unable to start muxer (err=%d)\n", err);
+                        ALOGE("Unable to start muxer (err=%d)\n", err);
                         return err;
                     }
                 }
@@ -457,7 +466,7 @@ static status_t runEncoder(const sp<MediaCodec>& encoder,
             ALOGV("Encoder buffers changed");
             err = encoder->getOutputBuffers(&buffers);
             if (err != NO_ERROR) {
-                fprintf(stderr,
+                ALOGE(
                         "Unable to get new output buffers (err=%d)\n", err);
                 return err;
             }
@@ -466,7 +475,7 @@ static status_t runEncoder(const sp<MediaCodec>& encoder,
             ALOGW("dequeueOutputBuffer returned INVALID_OPERATION");
             return err;
         default:
-            fprintf(stderr,
+            ALOGE(
                     "Got weird result %d from dequeueOutputBuffer\n", err);
             return err;
         }
@@ -491,14 +500,14 @@ static FILE* prepareRawOutput(const char* fileName) {
 
     if (strcmp(fileName, "-") == 0) {
         if (gVerbose) {
-            fprintf(stderr, "ERROR: verbose output and '-' not compatible");
+            ALOGE("ERROR: verbose output and '-' not compatible");
             return NULL;
         }
         rawFp = stdout;
     } else {
         rawFp = fopen(fileName, "w");
         if (rawFp == NULL) {
-            fprintf(stderr, "fopen raw failed: %s\n", strerror(errno));
+            ALOGE("fopen raw failed: %s\n", strerror(errno));
             return NULL;
         }
     }
@@ -543,7 +552,7 @@ static status_t recordScreen(const char* fileName) {
     DisplayInfo mainDpyInfo;
     err = SurfaceComposerClient::getDisplayInfo(mainDpy, &mainDpyInfo);
     if (err != NO_ERROR) {
-        fprintf(stderr, "ERROR: unable to get display characteristics\n");
+        ALOGE("ERROR: unable to get display characteristics\n");
         return err;
     }
     if (gVerbose) {
@@ -564,7 +573,8 @@ static status_t recordScreen(const char* fileName) {
     sp<MediaCodec> encoder;
     sp<FrameOutput> frameOutput;
     sp<IGraphicBufferProducer> encoderInputSurface;
-    if (gOutputFormat != FORMAT_FRAMES && gOutputFormat != FORMAT_RAW_FRAMES) {
+    if (gOutputFormat != FORMAT_FRAMES && gOutputFormat != FORMAT_RAW_FRAMES
+        && gOutputFormat != FORMAT_JPG) {
         err = prepareEncoder(mainDpyInfo.fps, &encoder, &encoderInputSurface);
 
         if (err != NO_ERROR && !gSizeSpecified) {
@@ -574,7 +584,7 @@ static status_t recordScreen(const char* fileName) {
             uint32_t newHeight = needSwap ? kFallbackWidth : kFallbackHeight;
             if (gVideoWidth != newWidth && gVideoHeight != newHeight) {
                 ALOGV("Retrying with 720p");
-                fprintf(stderr, "WARNING: failed at %dx%d, retrying at %dx%d\n",
+                ALOGE("WARNING: failed at %dx%d, retrying at %dx%d\n",
                         gVideoWidth, gVideoHeight, newWidth, newHeight);
                 gVideoWidth = newWidth;
                 gVideoHeight = newHeight;
@@ -590,7 +600,7 @@ static status_t recordScreen(const char* fileName) {
     } else {
         // We're not using an encoder at all.  The "encoder input surface" we hand to
         // SurfaceFlinger will just feed directly to us.
-        frameOutput = new FrameOutput();
+        frameOutput = new FrameOutput(gOutputFormat);
         err = frameOutput->createInputSurface(gVideoWidth, gVideoHeight, &encoderInputSurface);
         if (err != NO_ERROR) {
             return err;
@@ -637,7 +647,13 @@ static status_t recordScreen(const char* fileName) {
         case FORMAT_MP4: {
             // Configure muxer.  We have to wait for the CSD blob from the encoder
             // before we can start it.
-            muxer = new MediaMuxer(fileName, MediaMuxer::OUTPUT_FORMAT_MPEG_4);
+            int fd = open(fileName, O_CREAT | O_LARGEFILE | O_TRUNC | O_RDWR, S_IRUSR | S_IWUSR);
+            if (fd < 0) {
+                ALOGE("ERROR: couldn't open file\n");
+                abort();
+            }
+            muxer = new MediaMuxer(fd, MediaMuxer::OUTPUT_FORMAT_MPEG_4);
+            close(fd);
             if (gRotate) {
                 muxer->setOrientationHint(90);  // TODO: does this do anything?
             }
@@ -645,6 +661,7 @@ static status_t recordScreen(const char* fileName) {
         }
         case FORMAT_H264:
         case FORMAT_FRAMES:
+        case FORMAT_JPG:
         case FORMAT_RAW_FRAMES: {
             rawFp = prepareRawOutput(fileName);
             if (rawFp == NULL) {
@@ -654,11 +671,12 @@ static status_t recordScreen(const char* fileName) {
             break;
         }
         default:
-            fprintf(stderr, "ERROR: unknown format %d\n", gOutputFormat);
+            ALOGE("ERROR: unknown format %d\n", gOutputFormat);
             abort();
     }
 
-    if (gOutputFormat == FORMAT_FRAMES || gOutputFormat == FORMAT_RAW_FRAMES) {
+    if (gOutputFormat == FORMAT_FRAMES || gOutputFormat == FORMAT_RAW_FRAMES
+        || gOutputFormat == FORMAT_JPG) {
         // TODO: if we want to make this a proper feature, we should output
         //       an outer header with version info.  Right now we never change
         //       the frame size or format, so we could conceivably just send
@@ -692,7 +710,7 @@ static status_t recordScreen(const char* fileName) {
         err = runEncoder(encoder, muxer, rawFp, mainDpy, dpy,
                 mainDpyInfo.orientation);
         if (err != NO_ERROR) {
-            fprintf(stderr, "Encoder failed (err=%d)\n", err);
+            ALOGE("Encoder failed (err=%d)\n", err);
             // fall through to cleanup
         }
 
@@ -827,7 +845,7 @@ static status_t parseValueWithUnit(const char* str, uint32_t* pValue) {
         *pValue = value * 1000000;  // check for overflow?
         return NO_ERROR;
     } else {
-        fprintf(stderr, "Unrecognized value: %s\n", str);
+        ALOGE("Unrecognized value: %s\n", str);
         return UNKNOWN_ERROR;
     }
 }
@@ -836,7 +854,7 @@ static status_t parseValueWithUnit(const char* str, uint32_t* pValue) {
  * Dumps usage on stderr.
  */
 static void usage() {
-    fprintf(stderr,
+    ALOGE(
         "Usage: screenrecord [options] <filename>\n"
         "\n"
         "Android screenrecord v%d.%d.  Records the device's display to a .mp4 file.\n"
@@ -868,7 +886,11 @@ static void usage() {
 /*
  * Parses args and kicks things off.
  */
+#if defined(BUILD_SHARED_LIBRARY)
+int screen_record_main(int argc, char* const argv[]) {
+#else
 int main(int argc, char* const argv[]) {
+#endif
     static const struct option longOptions[] = {
         { "help",               no_argument,        NULL, 'h' },
         { "verbose",            no_argument,        NULL, 'v' },
@@ -900,12 +922,12 @@ int main(int argc, char* const argv[]) {
             break;
         case 's':
             if (!parseWidthHeight(optarg, &gVideoWidth, &gVideoHeight)) {
-                fprintf(stderr, "Invalid size '%s', must be width x height\n",
+                ALOGE("Invalid size '%s', must be width x height\n",
                         optarg);
                 return 2;
             }
             if (gVideoWidth == 0 || gVideoHeight == 0) {
-                fprintf(stderr,
+                ALOGE(
                     "Invalid size %ux%u, width and height may not be zero\n",
                     gVideoWidth, gVideoHeight);
                 return 2;
@@ -917,7 +939,7 @@ int main(int argc, char* const argv[]) {
                 return 2;
             }
             if (gBitRate < kMinBitRate || gBitRate > kMaxBitRate) {
-                fprintf(stderr,
+                ALOGE(
                         "Bit rate %dbps outside acceptable range [%d,%d]\n",
                         gBitRate, kMinBitRate, kMaxBitRate);
                 return 2;
@@ -926,7 +948,7 @@ int main(int argc, char* const argv[]) {
         case 't':
             gTimeLimitSec = atoi(optarg);
             if (gTimeLimitSec == 0 || gTimeLimitSec > kMaxTimeLimitSec) {
-                fprintf(stderr,
+                ALOGE(
                         "Time limit %ds outside acceptable range [1,%d]\n",
                         gTimeLimitSec, kMaxTimeLimitSec);
                 return 2;
@@ -955,21 +977,23 @@ int main(int argc, char* const argv[]) {
                 gOutputFormat = FORMAT_FRAMES;
             } else if (strcmp(optarg, "raw-frames") == 0) {
                 gOutputFormat = FORMAT_RAW_FRAMES;
+            } else if (strcmp(optarg, "jpg") == 0) {
+                gOutputFormat = FORMAT_JPG;
             } else {
-                fprintf(stderr, "Unknown format '%s'\n", optarg);
+                ALOGE("Unknown format '%s'\n", optarg);
                 return 2;
             }
             break;
         default:
             if (ic != '?') {
-                fprintf(stderr, "getopt_long returned unexpected value 0x%x\n", ic);
+                ALOGE("getopt_long returned unexpected value 0x%x\n", ic);
             }
             return 2;
         }
     }
 
     if (optind != argc - 1) {
-        fprintf(stderr, "Must specify output file (see --help).\n");
+        ALOGE("Must specify output file (see --help).\n");
         return 2;
     }
 
@@ -981,7 +1005,7 @@ int main(int argc, char* const argv[]) {
         // now for better diagnostics.
         int fd = open(fileName, O_CREAT | O_RDWR, 0644);
         if (fd < 0) {
-            fprintf(stderr, "Unable to open '%s': %s\n", fileName, strerror(errno));
+            ALOGE("Unable to open '%s': %s\n", fileName, strerror(errno));
             return 1;
         }
         close(fd);

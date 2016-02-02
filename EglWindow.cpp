@@ -25,7 +25,7 @@
 #include <gui/Surface.h>
 
 #include "EglWindow.h"
-
+#include "GLExtensions.h"
 #include <EGL/egl.h>
 #include <EGL/eglext.h>
 
@@ -94,7 +94,43 @@ status_t EglWindow::makeCurrent() const {
         ALOGE("eglMakeCurrent failed: %#x", eglGetError());
         return UNKNOWN_ERROR;
     }
+    showGLInfos();
     return NO_ERROR;
+}
+
+EglWindow::GlesVersion EglWindow::parseGlesVersion(const char* str) {
+    int major, minor;
+    if (sscanf(str, "OpenGL ES-CM %d.%d", &major, &minor) != 2) {
+        if (sscanf(str, "OpenGL ES %d.%d", &major, &minor) != 2) {
+            ALOGW("Unable to parse GL_VERSION string: \"%s\"", str);
+            return GLES_VERSION_1_0;
+        }
+    }
+
+    if (major == 1 && minor == 0) return GLES_VERSION_1_0;
+    if (major == 1 && minor >= 1) return GLES_VERSION_1_1;
+    if (major == 2 && minor >= 0) return GLES_VERSION_2_0;
+    if (major == 3 && minor >= 0) return GLES_VERSION_3_0;
+
+    ALOGW("Unrecognized OpenGL ES version: %d.%d", major, minor);
+    return GLES_VERSION_1_0;
+}
+
+// seems only work when current context have a valid surface on allwinner A20
+void EglWindow::showGLInfos()
+{
+    GLExtensions& extensions(GLExtensions::getInstance());
+    extensions.initWithGLStrings(
+        glGetString(GL_VENDOR),
+        glGetString(GL_RENDERER),
+        glGetString(GL_VERSION),
+        glGetString(GL_EXTENSIONS));
+    ALOGV("GL_VENDOR : %s", extensions.getVendor());
+    ALOGV("GL_RENDERER : %s", extensions.getRenderer());
+    ALOGV("GL_VERSION : %s", extensions.getVersion());
+    ALOGV("GL_EXTENSIONS : %s", extensions.getExtension());
+
+    GlesVersion version = parseGlesVersion( extensions.getVersion() );
 }
 
 status_t EglWindow::eglSetupContext(bool forPbuffer) {
@@ -143,7 +179,11 @@ status_t EglWindow::eglSetupContext(bool forPbuffer) {
     }
 
     EGLint contextAttribs[] = {
+#ifdef USE_PBO // Pixel Buffer Object need OpenGL ES 3.0
+        EGL_CONTEXT_CLIENT_VERSION, 3,
+#else
         EGL_CONTEXT_CLIENT_VERSION, 2,
+#endif
         EGL_NONE
     };
     mEglContext = eglCreateContext(mEglDisplay, mEglConfig, EGL_NO_CONTEXT,

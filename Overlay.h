@@ -22,6 +22,9 @@
 #include "EglWindow.h"
 
 #include <gui/BufferQueue.h>
+#if PLATFORM_SDK_VERSION <= 19
+#include <gui/IGraphicBufferConsumer.h> // for BufferItem
+#endif
 #include <gui/GLConsumer.h>
 #include <utils/Thread.h>
 
@@ -78,8 +81,15 @@ private:
             const Program& texRender, TextRenderer& textRenderer);
 
     // (overrides GLConsumer::FrameAvailableListener method)
+#if PLATFORM_SDK_VERSION > 19
     virtual void onFrameAvailable(const BufferItem& item);
-
+#else
+    virtual void onFrameAvailable(const IGraphicBufferConsumer::BufferItem& item);
+    virtual void onFrameAvailable() {
+        static const IGraphicBufferConsumer::BufferItem tmp;
+        onFrameAvailable(tmp);
+    }
+#endif
     // (overrides Thread method)
     virtual bool threadLoop();
 

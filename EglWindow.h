@@ -31,6 +31,13 @@ namespace android {
  */
 class EglWindow {
 public:
+    enum GlesVersion {
+        GLES_VERSION_1_0    = 0x10000,
+        GLES_VERSION_1_1    = 0x10001,
+        GLES_VERSION_2_0    = 0x20000,
+        GLES_VERSION_3_0    = 0x30000,
+        };
+
     EglWindow() :
         mEglDisplay(EGL_NO_DISPLAY),
         mEglContext(EGL_NO_CONTEXT),
@@ -70,6 +77,9 @@ private:
     // Init display, create config and context.
     status_t eglSetupContext(bool forPbuffer);
     void eglRelease();
+
+    static EglWindow::GlesVersion parseGlesVersion(const char* str);
+    static void showGLInfos();
 
     // Basic EGL goodies.
     EGLDisplay mEglDisplay;

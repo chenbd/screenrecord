@@ -21,18 +21,29 @@
 #include "EglWindow.h"
 
 #include <gui/BufferQueue.h>
+#if PLATFORM_SDK_VERSION <= 19
+#include <gui/IGraphicBufferConsumer.h> // for BufferItem
+#endif
 #include <gui/GLConsumer.h>
 
+#include "turbojpeg.h"
+
 namespace android {
+typedef enum {
+    FORMAT_MP4, FORMAT_H264, FORMAT_FRAMES, FORMAT_RAW_FRAMES, FORMAT_JPG
+} OUT_OUT_FORMAT;
 
 /*
  * Support for "frames" output format.
  */
 class FrameOutput : public GLConsumer::FrameAvailableListener {
 public:
-    FrameOutput() : mFrameAvailable(false),
+    FrameOutput(OUT_OUT_FORMAT format) : mFrameAvailable(false),
         mExtTextureName(0),
-        mPixelBuf(NULL)
+        mPixelBuf(NULL),
+        mFormat(format),
+        destinationJpegBuffer(NULL),
+        tjCompressHandle(NULL)
         {}
 
     // Create an "input surface", similar in purpose to a MediaCodec input
@@ -59,11 +70,29 @@ private:
     // Destruction via RefBase.
     virtual ~FrameOutput() {
         delete[] mPixelBuf;
+        if(tjCompressHandle) {
+            tjDestroy(tjCompressHandle);
+            tjCompressHandle = NULL;
+        }
+        if (destinationJpegBuffer) {
+          delete destinationJpegBuffer;
+          destinationJpegBuffer = NULL;
+        }
+#ifdef USE_PBO // Pixel Buffer Object
+        glDeleteFramebuffers(1, &mFBO);
+#endif
     }
 
     // (overrides GLConsumer::FrameAvailableListener method)
+#if PLATFORM_SDK_VERSION > 19
     virtual void onFrameAvailable(const BufferItem& item);
-
+#else
+    virtual void onFrameAvailable(const IGraphicBufferConsumer::BufferItem& item);
+    virtual void onFrameAvailable() {
+        static const IGraphicBufferConsumer::BufferItem tmp;
+        onFrameAvailable(tmp);
+    }
+#endif
     // Reduces RGBA to RGB, in place.
     static void reduceRgbaToRgb(uint8_t* buf, unsigned int pixelCount);
 
@@ -92,6 +121,14 @@ private:
 
     // Pixel data buffer.
     uint8_t* mPixelBuf;
+
+    OUT_OUT_FORMAT mFormat;
+    unsigned long destinationJpegBufferSize;
+    unsigned char *destinationJpegBuffer;
+    tjhandle tjCompressHandle;
+#ifdef USE_PBO // Pixel Buffer Object
+    GLuint mPBO;
+#endif
 };
 
 }; // namespace android

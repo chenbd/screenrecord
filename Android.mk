@@ -22,19 +22,25 @@ LOCAL_SRC_FILES := \
 	FrameOutput.cpp \
 	TextRenderer.cpp \
 	Overlay.cpp \
-	Program.cpp
+	Program.cpp \
+	GLExtensions.cpp
+
+LOCAL_STATIC_LIBRARIES = libjpeg_turbo-static
 
 LOCAL_SHARED_LIBRARIES := \
 	libstagefright libmedia libutils libbinder libstagefright_foundation \
-	libjpeg libgui libcutils liblog libEGL libGLESv2
-
+	libgui libcutils liblog libEGL libGLESv2
+#libjpeg
+ifeq ($(PLATFORM_SDK_VERSION), 19)
+LOCAL_SHARED_LIBRARIES += libui #libui for Fence
+end
 LOCAL_C_INCLUDES := \
 	frameworks/av/media/libstagefright \
 	frameworks/av/media/libstagefright/include \
 	$(TOP)/frameworks/native/include/media/openmax \
-	external/jpeg
+	external/libjpeg_turbo
 
-LOCAL_CFLAGS += -Wno-multichar
+LOCAL_CFLAGS += -Wno-multichar -DPLATFORM_SDK_VERSION=$(PLATFORM_SDK_VERSION)
 #LOCAL_CFLAGS += -UNDEBUG
 
 LOCAL_MODULE_TAGS := optional
@@ -42,3 +48,37 @@ LOCAL_MODULE_TAGS := optional
 LOCAL_MODULE:= screenrecord
 
 include $(BUILD_EXECUTABLE)
+
+
+include $(CLEAR_VARS)
+
+LOCAL_SRC_FILES := \
+	screenrecord.cpp \
+	EglWindow.cpp \
+	FrameOutput.cpp \
+	TextRenderer.cpp \
+	Overlay.cpp \
+	Program.cpp \
+	GLExtensions.cpp
+
+LOCAL_STATIC_LIBRARIES = libjpeg_turbo-static
+
+LOCAL_SHARED_LIBRARIES := \
+	libstagefright libmedia libutils libbinder libstagefright_foundation \
+	libgui libcutils liblog libEGL libGLESv2 libui #libui for Fence
+
+LOCAL_C_INCLUDES := \
+	frameworks/av/media/libstagefright \
+	frameworks/av/media/libstagefright/include \
+	$(TOP)/frameworks/native/include/media/openmax \
+	external/libjpeg_turbo
+
+LOCAL_CFLAGS += -Wno-multichar -DPLATFORM_SDK_VERSION=$(PLATFORM_SDK_VERSION) -DBUILD_SHARED_LIBRARY=1
+#LOCAL_CFLAGS += -UNDEBUG
+
+LOCAL_MODULE_TAGS := optional
+
+LOCAL_MODULE:= libscreenrecord-$(PLATFORM_SDK_VERSION)
+
+
+include $(BUILD_SHARED_LIBRARY)

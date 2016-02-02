@@ -36,6 +36,9 @@
 #include "TextRenderer.h"
 
 using namespace android;
+#ifndef PRId64
+#define PRId64 "lld"
+#endif
 
 // System properties to look up and display on the info screen.
 const char* Overlay::kPropertyNames[] = {
@@ -171,7 +174,13 @@ status_t Overlay::setup_l() {
     }
 
     sp<IGraphicBufferConsumer> consumer;
+#if PLATFORM_SDK_VERSION > 19
     BufferQueue::createBufferQueue(&mProducer, &consumer);
+#else
+    sp<BufferQueue> mBQ = new BufferQueue();
+    mProducer = mBQ;
+    consumer = mBQ;
+#endif
     mGlConsumer = new GLConsumer(consumer, mExtTextureName,
                 GL_TEXTURE_EXTERNAL_OES, true, false);
     mGlConsumer->setName(String8("virtual display"));
@@ -274,7 +283,11 @@ void Overlay::getTimeString_l(nsecs_t monotonicNsec, char* buf, size_t bufLen) {
 }
 
 // Callback; executes on arbitrary thread.
+#if PLATFORM_SDK_VERSION > 19
 void Overlay::onFrameAvailable(const BufferItem& /* item */) {
+#else
+void Overlay::onFrameAvailable(const IGraphicBufferConsumer::BufferItem& /* item */) {
+#endif
     ALOGV("Overlay::onFrameAvailable");
     Mutex::Autolock _l(mMutex);
     mFrameAvailable = true;
@@ -387,11 +400,21 @@ void Overlay::onFrameAvailable(const BufferItem& /* item */) {
 
     // Show GL info
     String8 glStr("OpenGL: ");
-    glStr += (char*) glGetString(GL_VENDOR);
-    glStr += " / ";
-    glStr += (char*) glGetString(GL_RENDERER);
-    glStr += ", ";
-    glStr += (char*) glGetString(GL_VERSION);
+    char *ptr;
+    ptr = (char*) glGetString(GL_VENDOR);
+    if (ptr != NULL) {
+        glStr += ptr;//(char*) glGetString(GL_VENDOR);
+        glStr += " / ";
+    }
+    ptr = (char*) glGetString(GL_RENDERER);
+    if (ptr != NULL) {
+        glStr += ptr;//(char*) glGetString(GL_RENDERER);
+        glStr += ", ";
+    }
+    ptr = (char*) glGetString(GL_VERSION);
+    if (ptr != NULL) {
+        glStr += ptr;//(char*) glGetString(GL_VERSION);
+    }
     ypos = textRenderer.drawWrappedString(texProgram, xpos, ypos, glStr);
 
     //glDisable(GL_BLEND);
