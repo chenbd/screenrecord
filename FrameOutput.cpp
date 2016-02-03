@@ -157,72 +157,85 @@ status_t FrameOutput::copyFrame(FILE* fp, long timeoutUsec, bool rawFrames) {
         if (err != NO_ERROR) {
             ALOGE("error lock frames: lock failed: %s (%d)", strerror(-err), -err);
         } else {
-            int quality = 80;
-            long org_size = destinationJpegBufferSize;
             int64_t start;
             if (kShowTiming) {
                 start = systemTime(CLOCK_MONOTONIC);
             }
-            err = tjCompress2(tjCompressHandle, (unsigned char*)(img),
-                activeBuffer->getWidth(),
-                activeBuffer->getWidth() * tjPixelSize[TJPF_RGBX],
-                activeBuffer->getHeight(),
-                TJPF_RGBX,
-                &destinationJpegBuffer,
-                &destinationJpegBufferSize,
-                TJSAMP_422, //TJSAMP_420,
-                quality,
-                /*TJFLAG_FASTUPSAMPLE |*/ TJFLAG_NOREALLOC);
-            if (err != NO_ERROR) {
-                ALOGE("jpg compress error: %s", tjGetErrorStr());
-            } else {
-                if (kShowTiming) {
-                  ALOGV("jpg compressed %ld bytes using %lld ms",
-                      destinationJpegBufferSize, (systemTime(CLOCK_MONOTONIC) - start) / 1000000);
-                }
-            }
-
-            if (mCtx && mCtx->cb != NULL) {
-                int ret = mCtx->cb(mCtx->para, mCtx->recparams.gOutputFormat,
-                        0, destinationJpegBufferSize, destinationJpegBuffer);
-                if (ret) {
-                    return -1;
-                }
-            }
-            if (mGlConsumer->getFrameNumber() == 1) {
-                fwrite(destinationJpegBuffer, 1, destinationJpegBufferSize, fp);
-                fflush(fp);
-            }
-            if (1) {
-                if (kShowTiming) {
-                    start = systemTime(CLOCK_MONOTONIC);
-                }
-                tjhandle decHandle = tjInitDecompress();
-                err = tjDecompress2(decHandle, destinationJpegBuffer,
-                        destinationJpegBufferSize, mPixelBuf,
-                        activeBuffer->getWidth(),
-                        activeBuffer->getWidth() * tjPixelSize[TJPF_RGBX],
-                        activeBuffer->getHeight(),
-                        TJPF_RGBX,
-                        /*TJFLAG_FASTUPSAMPLE |*/ TJFLAG_NOREALLOC);
-
-                tjDestroy(decHandle);
+            if (FORMAT_JPG == mFormat) {
+                int quality = 80;
+                long org_size = destinationJpegBufferSize;
+                err = tjCompress2(tjCompressHandle, (unsigned char*)(img),
+                    activeBuffer->getWidth(),
+                    activeBuffer->getWidth() * tjPixelSize[TJPF_RGBX],
+                    activeBuffer->getHeight(),
+                    TJPF_RGBX,
+                    &destinationJpegBuffer,
+                    &destinationJpegBufferSize,
+                    TJSAMP_422, //TJSAMP_420,
+                    quality,
+                    /*TJFLAG_FASTUPSAMPLE |*/ TJFLAG_NOREALLOC);
                 if (err != NO_ERROR) {
-                    ALOGE("jpg decompress error: %s", tjGetErrorStr());
+                    ALOGE("jpg compress error: %s", tjGetErrorStr());
                 } else {
                     if (kShowTiming) {
-                        ALOGV("jpg decompressed %ld bytes using %lld ms",
-                        destinationJpegBufferSize, (systemTime(CLOCK_MONOTONIC) - start) / 1000000);
+                      ALOGV("jpg compressed %ld bytes using %lld ms",
+                          destinationJpegBufferSize, (systemTime(CLOCK_MONOTONIC) - start) / 1000000);
+                    }
+                }
+
+                if (mCtx && mCtx->cb != NULL) {
+                    int ret = mCtx->cb(mCtx->para, mCtx->recparams.gOutputFormat,
+                            0, destinationJpegBufferSize, destinationJpegBuffer);
+                    if (ret) {
+                        return -1;
+                    }
+                }
+                if (mGlConsumer->getFrameNumber() == 1) {
+                    fwrite(destinationJpegBuffer, 1, destinationJpegBufferSize, fp);
+                    fflush(fp);
+                }
+                if (1) {
+                    if (kShowTiming) {
+                        start = systemTime(CLOCK_MONOTONIC);
+                    }
+                    tjhandle decHandle = tjInitDecompress();
+                    err = tjDecompress2(decHandle, destinationJpegBuffer,
+                            destinationJpegBufferSize, mPixelBuf,
+                            activeBuffer->getWidth(),
+                            activeBuffer->getWidth() * tjPixelSize[TJPF_RGBX],
+                            activeBuffer->getHeight(),
+                            TJPF_RGBX,
+                            /*TJFLAG_FASTUPSAMPLE |*/ TJFLAG_NOREALLOC);
+
+                    tjDestroy(decHandle);
+                    if (err != NO_ERROR) {
+                        ALOGE("jpg decompress error: %s", tjGetErrorStr());
+                    } else {
+                        if (kShowTiming) {
+                            ALOGV("jpg decompressed %ld bytes using %lld ms",
+                            destinationJpegBufferSize, (systemTime(CLOCK_MONOTONIC) - start) / 1000000);
+                        }
+                    }
+                }
+                destinationJpegBufferSize = org_size;
+            } else if (FORMAT_FRAMES == mFormat || FORMAT_RAW_FRAMES == mFormat) {
+                if (mCtx && mCtx->cb != NULL) {
+                    int ret = mCtx->cb(mCtx->para, mCtx->recparams.gOutputFormat,
+                            0,
+                            activeBuffer->getWidth() * activeBuffer->getHeight() * 4,
+                            img);
+                    if (ret) {
+                        return -1;
                     }
                 }
             }
-            destinationJpegBufferSize = org_size;
             err = activeBuffer->unlock();
             if (err != NO_ERROR) {
                 ALOGE("unlock failed: %s (%d)", strerror(-err), -err);
             }
         }
     }
+    return NO_ERROR;
 
     // The data is in an external texture, so we need to render it to the
     // pbuffer to get access to RGB pixel data.  We also want to flip it
