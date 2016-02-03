@@ -52,7 +52,9 @@
 #include <media/stagefright/MediaMuxer.h>
 #include <media/ICrypto.h>
 
+#include "include/libscreenrecord.h"
 #include "screenrecord.h"
+
 #include "Overlay.h"
 #include "FrameOutput.h"
 
@@ -320,7 +322,7 @@ static status_t prepareVirtualDisplay(const DisplayInfo& mainDpyInfo,
  *
  * The muxer must *not* have been started before calling.
  */
-static status_t runEncoder(const sp<MediaCodec>& encoder,
+static status_t runEncoder(libscreenrecord_ctx_t *c, const sp<MediaCodec>& encoder,
         const sp<MediaMuxer>& muxer, FILE* rawFp, const sp<IBinder>& mainDpy,
         const sp<IBinder>& virtualDpy, uint8_t orientation) {
     static int kTimeout = 250000;   // be responsive on signal
@@ -409,6 +411,13 @@ static status_t runEncoder(const sp<MediaCodec>& encoder,
                     // the SPS/PPS data because mplayer gets confused.
                     if ((flags & MediaCodec::BUFFER_FLAG_CODECCONFIG) == 0) {
                         fflush(rawFp);
+                    }
+                    if (c->cb != NULL) {
+                        int ret = c->cb(c->para, c->recparams.gOutputFormat,
+                                0, size, buffers[bufIndex]->data());
+                        if (ret) {
+                            gStopRequested = true;
+                        }
                     }
                 } else {
                     // The MediaMuxer docs are unclear, but it appears that we
@@ -534,7 +543,7 @@ static FILE* prepareRawOutput(const char* fileName) {
  * Configures codec, muxer, and virtual display, then starts moving bits
  * around.
  */
-static status_t recordScreen(const char* fileName) {
+static status_t recordScreen(libscreenrecord_ctx_t *c) {
     status_t err;
 
     // Configure signal handler.
@@ -600,7 +609,7 @@ static status_t recordScreen(const char* fileName) {
     } else {
         // We're not using an encoder at all.  The "encoder input surface" we hand to
         // SurfaceFlinger will just feed directly to us.
-        frameOutput = new FrameOutput(gOutputFormat);
+        frameOutput = new FrameOutput(c);
         err = frameOutput->createInputSurface(gVideoWidth, gVideoHeight, &encoderInputSurface);
         if (err != NO_ERROR) {
             return err;
@@ -647,7 +656,7 @@ static status_t recordScreen(const char* fileName) {
         case FORMAT_MP4: {
             // Configure muxer.  We have to wait for the CSD blob from the encoder
             // before we can start it.
-            int fd = open(fileName, O_CREAT | O_LARGEFILE | O_TRUNC | O_RDWR, S_IRUSR | S_IWUSR);
+            int fd = open(c->recparams.u.fileName, O_CREAT | O_LARGEFILE | O_TRUNC | O_RDWR, S_IRUSR | S_IWUSR);
             if (fd < 0) {
                 ALOGE("ERROR: couldn't open file\n");
                 abort();
@@ -663,7 +672,7 @@ static status_t recordScreen(const char* fileName) {
         case FORMAT_FRAMES:
         case FORMAT_JPG:
         case FORMAT_RAW_FRAMES: {
-            rawFp = prepareRawOutput(fileName);
+            rawFp = prepareRawOutput(c->recparams.u.fileName);
             if (rawFp == NULL) {
                 if (encoder != NULL) encoder->release();
                 return -1;
@@ -688,6 +697,8 @@ static status_t recordScreen(const char* fileName) {
         // TODO: figure out if we can eliminate this
         frameOutput->prepareToCopy();
 
+        int64_t startWhenNsec = systemTime(CLOCK_MONOTONIC);
+        int64_t endWhenNsec = startWhenNsec + seconds_to_nanoseconds(gTimeLimitSec);
         while (!gStopRequested) {
             // Poll for frames, the same way we do for MediaCodec.  We do
             // all of the work on the main thread.
@@ -704,10 +715,16 @@ static status_t recordScreen(const char* fileName) {
                 ALOGE("Got error %d from copyFrame()", err);
                 break;
             }
+            if (systemTime(CLOCK_MONOTONIC) > endWhenNsec) {
+                if (gVerbose) {
+                    ALOGD("Time limit reached\n");
+                }
+                break;
+            }
         }
     } else {
         // Main encoder loop.
-        err = runEncoder(encoder, muxer, rawFp, mainDpy, dpy,
+        err = runEncoder(c, encoder, muxer, rawFp, mainDpy, dpy,
                 mainDpyInfo.orientation);
         if (err != NO_ERROR) {
             ALOGE("Encoder failed (err=%d)\n", err);
@@ -851,149 +868,10 @@ static status_t parseValueWithUnit(const char* str, uint32_t* pValue) {
 }
 
 /*
- * Dumps usage on stderr.
- */
-static void usage() {
-    ALOGE(
-        "Usage: screenrecord [options] <filename>\n"
-        "\n"
-        "Android screenrecord v%d.%d.  Records the device's display to a .mp4 file.\n"
-        "\n"
-        "Options:\n"
-        "--size WIDTHxHEIGHT\n"
-        "    Set the video size, e.g. \"1280x720\".  Default is the device's main\n"
-        "    display resolution (if supported), 1280x720 if not.  For best results,\n"
-        "    use a size supported by the AVC encoder.\n"
-        "--bit-rate RATE\n"
-        "    Set the video bit rate, in bits per second.  Value may be specified as\n"
-        "    bits or megabits, e.g. '4000000' is equivalent to '4M'.  Default %dMbps.\n"
-        "--bugreport\n"
-        "    Add additional information, such as a timestamp overlay, that is helpful\n"
-        "    in videos captured to illustrate bugs.\n"
-        "--time-limit TIME\n"
-        "    Set the maximum recording time, in seconds.  Default / maximum is %d.\n"
-        "--verbose\n"
-        "    Display interesting information on stdout.\n"
-        "--help\n"
-        "    Show this message.\n"
-        "\n"
-        "Recording continues until Ctrl-C is hit or the time limit is reached.\n"
-        "\n",
-        kVersionMajor, kVersionMinor, gBitRate / 1000000, gTimeLimitSec
-        );
-}
-
-/*
  * Parses args and kicks things off.
  */
-int main(int argc, char* const argv[]) {
-    static const struct option longOptions[] = {
-        { "help",               no_argument,        NULL, 'h' },
-        { "verbose",            no_argument,        NULL, 'v' },
-        { "size",               required_argument,  NULL, 's' },
-        { "bit-rate",           required_argument,  NULL, 'b' },
-        { "time-limit",         required_argument,  NULL, 't' },
-        { "bugreport",          no_argument,        NULL, 'u' },
-        // "unofficial" options
-        { "show-device-info",   no_argument,        NULL, 'i' },
-        { "show-frame-time",    no_argument,        NULL, 'f' },
-        { "rotate",             no_argument,        NULL, 'r' },
-        { "output-format",      required_argument,  NULL, 'o' },
-        { NULL,                 0,                  NULL, 0 }
-    };
-
-    while (true) {
-        int optionIndex = 0;
-        int ic = getopt_long(argc, argv, "", longOptions, &optionIndex);
-        if (ic == -1) {
-            break;
-        }
-
-        switch (ic) {
-        case 'h':
-            usage();
-            return 0;
-        case 'v':
-            gVerbose = true;
-            break;
-        case 's':
-            if (!parseWidthHeight(optarg, &gVideoWidth, &gVideoHeight)) {
-                ALOGE("Invalid size '%s', must be width x height\n",
-                        optarg);
-                return 2;
-            }
-            if (gVideoWidth == 0 || gVideoHeight == 0) {
-                ALOGE(
-                    "Invalid size %ux%u, width and height may not be zero\n",
-                    gVideoWidth, gVideoHeight);
-                return 2;
-            }
-            gSizeSpecified = true;
-            break;
-        case 'b':
-            if (parseValueWithUnit(optarg, &gBitRate) != NO_ERROR) {
-                return 2;
-            }
-            if (gBitRate < kMinBitRate || gBitRate > kMaxBitRate) {
-                ALOGE(
-                        "Bit rate %dbps outside acceptable range [%d,%d]\n",
-                        gBitRate, kMinBitRate, kMaxBitRate);
-                return 2;
-            }
-            break;
-        case 't':
-            gTimeLimitSec = atoi(optarg);
-            if (gTimeLimitSec == 0 || gTimeLimitSec > kMaxTimeLimitSec) {
-                ALOGE(
-                        "Time limit %ds outside acceptable range [1,%d]\n",
-                        gTimeLimitSec, kMaxTimeLimitSec);
-                return 2;
-            }
-            break;
-        case 'u':
-            gWantInfoScreen = true;
-            gWantFrameTime = true;
-            break;
-        case 'i':
-            gWantInfoScreen = true;
-            break;
-        case 'f':
-            gWantFrameTime = true;
-            break;
-        case 'r':
-            // experimental feature
-            gRotate = true;
-            break;
-        case 'o':
-            if (strcmp(optarg, "mp4") == 0) {
-                gOutputFormat = FORMAT_MP4;
-            } else if (strcmp(optarg, "h264") == 0) {
-                gOutputFormat = FORMAT_H264;
-            } else if (strcmp(optarg, "frames") == 0) {
-                gOutputFormat = FORMAT_FRAMES;
-            } else if (strcmp(optarg, "raw-frames") == 0) {
-                gOutputFormat = FORMAT_RAW_FRAMES;
-            } else if (strcmp(optarg, "jpg") == 0) {
-                gOutputFormat = FORMAT_JPG;
-            } else {
-                ALOGE("Unknown format '%s'\n", optarg);
-                return 2;
-            }
-            break;
-        default:
-            if (ic != '?') {
-                ALOGE("getopt_long returned unexpected value 0x%x\n", ic);
-            }
-            return 2;
-        }
-    }
-
-    if (optind != argc - 1) {
-        ALOGE("Must specify output file (see --help).\n");
-        return 2;
-    }
-
-    const char* fileName = argv[optind];
+static int screen_record_init(libscreenrecord_ctx_t * ctx) {
+    const char* fileName = ctx->recparams.u.fileName;
     if (gOutputFormat == FORMAT_MP4) {
         // MediaMuxer tries to create the file in the constructor, but we don't
         // learn about the failure until muxer.start(), which returns a generic
@@ -1007,12 +885,115 @@ int main(int argc, char* const argv[]) {
         close(fd);
     }
 
-    status_t err = recordScreen(fileName);
+    return 0;
+}
+
+static void init_default_record_params(libscreenrecord_params_t *recparams) {
+    recparams->gVerbose = false;           // chatty on stdout
+    recparams->gRotate = false;            // rotate 90 degrees
+    recparams->gOutputFormat = FORMAT_MP4;           // data format for output
+    recparams->gSizeSpecified = false;     // was size explicitly requested?
+    recparams->gWantInfoScreen = false;    // do we want initial info screen?
+    recparams->gWantFrameTime = false;     // do we want times on each frame?
+    recparams->gVideoWidth = 0;        // default width+height
+    recparams->gVideoHeight = 0;
+    recparams->gBitRate = 4000000;     // 4Mbps
+    recparams->gTimeLimitSec = kMaxTimeLimitSec;
+    strcpy(recparams->u.fileName, "/sdcard/aa.mp4");
+}
+
+static void init_global_recparms(libscreenrecord_params_t *recparams) {
+   gVerbose = recparams->gVerbose;           // chatty on stdout
+   gRotate = recparams->gRotate;            // rotate 90 degrees
+   gOutputFormat = recparams->gOutputFormat;           // data format for output
+   gSizeSpecified = recparams->gSizeSpecified;     // was size explicitly requested?
+   gWantInfoScreen = recparams->gWantInfoScreen;    // do we want initial info screen?
+   gWantFrameTime = recparams->gWantFrameTime;     // do we want times on each frame?
+   gVideoWidth = recparams->gVideoWidth;        // default width+height
+   gVideoHeight = recparams->gVideoHeight;
+   gBitRate = recparams->gBitRate;     // 4Mbps
+   gTimeLimitSec = recparams->gTimeLimitSec;
+}
+
+
+
+void *libscreenrecord_init(libscreenrecord_params_t *recparams) {
+    libscreenrecord_ctx_t *c;
+
+    c = (libscreenrecord_ctx_t*)calloc(sizeof(*c), 1);
+    if (c) {
+        if (recparams == NULL) {
+            init_default_record_params(&c->recparams);
+        } else {
+            memcpy(&c->recparams, recparams, sizeof(libscreenrecord_params_t));
+        }
+        if (screen_record_init(c)) {
+            goto err;
+        }
+        // TODO
+        init_global_recparms(&c->recparams);
+    }
+
+    return c;
+err:
+    if (c) {
+        free(c);
+    }
+    return NULL;
+}
+
+int libscreenrecord_destory(void *ctx) {
+    libscreenrecord_ctx_t *c;
+
+    c = (libscreenrecord_ctx_t *)ctx;
+
+    if (c != NULL) {
+        free(c);
+    }
+    return 0;
+}
+
+int libscreenrecord_run(void *ctx) {
+    libscreenrecord_ctx_t *c;
+
+    c = (libscreenrecord_ctx_t *)ctx;
+    status_t err = recordScreen(c);
     if (err == NO_ERROR) {
         // Try to notify the media scanner.  Not fatal if this fails.
-        notifyMediaScanner(fileName);
+        notifyMediaScanner(c->recparams.u.fileName);
     }
     ALOGD(err == NO_ERROR ? "success" : "failed");
     return (int) err;
+
 }
 
+int libscreenrecord_registListener(void *ctx, NATIVE_CALLBACK callback, void *para) {
+    libscreenrecord_ctx_t *c;
+
+    c = (libscreenrecord_ctx_t *)ctx;
+    if (!c) {
+        return -1;
+    }
+    c->cb = callback;
+    c->para = para;
+    return 0;
+}
+
+
+int libscreenrecord_setBuf(void *ctx, void *buf, size_t bufsize) {
+    libscreenrecord_ctx_t *c;
+
+    c = (libscreenrecord_ctx_t *)ctx;
+    if (!c) {
+        return -1;
+    }
+    c->outbuf = buf;
+    c->outbuf_size = bufsize;
+
+    return 0;
+}
+
+int libscreenrecord_lockBuf(void *ctx, void *buf, size_t bufsize) {
+
+    return 0;
+}

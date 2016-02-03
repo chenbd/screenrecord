@@ -20,4 +20,17 @@
 #define kVersionMajor 1
 #define kVersionMinor 2
 
+#include "include/libscreenrecord.h"
+
+typedef struct tag_libscreenrecord_ctx {
+    NATIVE_CALLBACK cb;
+    void *para;
+
+    void *outbuf;
+    size_t outbuf_size;
+    libscreenrecord_params_t recparams;
+
+} libscreenrecord_ctx_t;
+
+
 #endif /*SCREENRECORD_SCREENRECORD_H*/

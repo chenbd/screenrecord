@@ -182,6 +182,13 @@ status_t FrameOutput::copyFrame(FILE* fp, long timeoutUsec, bool rawFrames) {
                 }
             }
 
+            if (mCtx && mCtx->cb != NULL) {
+                int ret = mCtx->cb(mCtx->para, mCtx->recparams.gOutputFormat,
+                        0, destinationJpegBufferSize, destinationJpegBuffer);
+                if (ret) {
+                    return -1;
+                }
+            }
             if (mGlConsumer->getFrameNumber() == 1) {
                 fwrite(destinationJpegBuffer, 1, destinationJpegBufferSize, fp);
                 fflush(fp);

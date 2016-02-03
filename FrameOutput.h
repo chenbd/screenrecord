@@ -27,11 +27,10 @@
 #include <gui/GLConsumer.h>
 
 #include "turbojpeg.h"
+#include "include/libscreenrecord.h"
+#include "screenrecord.h"
 
 namespace android {
-typedef enum {
-    FORMAT_MP4, FORMAT_H264, FORMAT_FRAMES, FORMAT_RAW_FRAMES, FORMAT_JPG
-} OUT_OUT_FORMAT;
 
 /*
  * Support for "frames" output format.
@@ -41,10 +40,21 @@ public:
     FrameOutput(OUT_OUT_FORMAT format) : mFrameAvailable(false),
         mExtTextureName(0),
         mPixelBuf(NULL),
+        mCtx(NULL),
         mFormat(format),
         destinationJpegBuffer(NULL),
         tjCompressHandle(NULL)
         {}
+    FrameOutput(libscreenrecord_ctx_t *c) : mFrameAvailable(false),
+        mExtTextureName(0),
+        mCtx(c),
+        mPixelBuf(NULL),
+        destinationJpegBuffer(NULL),
+        tjCompressHandle(NULL)
+        {
+            mFormat = c->recparams.gOutputFormat;
+        }
+
 
     // Create an "input surface", similar in purpose to a MediaCodec input
     // surface, that the virtual display can send buffers to.  Also configures
@@ -122,6 +132,7 @@ private:
     // Pixel data buffer.
     uint8_t* mPixelBuf;
 
+    libscreenrecord_ctx_t *mCtx;
     OUT_OUT_FORMAT mFormat;
     unsigned long destinationJpegBufferSize;
     unsigned char *destinationJpegBuffer;

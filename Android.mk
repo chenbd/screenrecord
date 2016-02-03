@@ -53,7 +53,7 @@ include $(BUILD_EXECUTABLE)
 include $(CLEAR_VARS)
 
 LOCAL_SRC_FILES := \
-	screenrecord.cpp \
+	libscreenrecord.cpp \
 	EglWindow.cpp \
 	FrameOutput.cpp \
 	TextRenderer.cpp \
